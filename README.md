@@ -1,41 +1,59 @@
 # Buckalew CRM Automation
 
-A Python-based automation system for managing clients using **GoHighLevel** as the CRM system.
+CRM automation workflows for Buckalew Financial Services using GoHighLevel.
 
-## Overview
-This project automates client onboarding, follow-ups, and integrations with GoHighLevel for efficient CRM management.
+## 🚀 Workflows
 
-## Features
-- Client onboarding and data collection
-- Automated follow-up scheduling
-- Email and calendar integrations
-- GoHighLevel API integration
+| # | Workflow | File | Description |
+|---|----------|------|-------------|
+| 1 | New Lead Follow-Up | `01_new_lead_followup.py` | Auto-follow up with new leads (SMS + email + task) |
+| 2 | Client Onboarding | `02_client_onboarding.py` | Welcome sequence for new clients |
+| 3 | Appointment Reminders | `03_appointment_reminders.py` | 24h and 2h SMS/email reminders |
+| 4 | Lead Scoring | `04_lead_scoring.py` | Auto-score leads based on engagement |
+| 5 | Re-engagement | `05_reengagement.py` | Win back inactive leads (30+ days) |
 
-## Setup
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/your-username/Buckalew-CRM-Automation.git
+## ⚙️ Setup
+
+1. Set your GoHighLevel API key:
+   ```
+   set GHL_API_KEY=pit-fcb5ac96-c1fb-489a-bbdc-a6bea29e23ff
    ```
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
+2. Set your Location ID:
+   ```
+   set GHL_LOCATION_ID=your_location_id_here
    ```
 
-3. Configure GoHighLevel API credentials in `.env`:
-   ```env
-   GH_API_KEY=your_api_key_here
+3. Run any workflow:
+   ```
+   python workflows/01_new_lead_followup.py
    ```
 
-## Usage
-Run the main script to start automating client workflows:
-```bash
-python main.py
+## 📅 Scheduling
+
+Use OpenClaw cron or Windows Task Scheduler to run workflows automatically:
+- **New Lead Check**: Every 30 minutes
+- **Appointment Reminders**: Every hour
+- **Lead Scoring**: Daily at 6 AM
+- **Re-engagement**: Daily at 9 AM
+
+## 🔧 GoHighLevel API
+
+- Base URL: `https://services.leadconnectorhq.com`
+- Auth: Bearer token
+- Version: `2021-07-28`
+
+## 📁 Project Structure
+
 ```
-
-## Documentation
-- [GoHighLevel API Documentation](https://app.gohighlevel.com/api)
-- [Python Script Guide](#)
-
-## License
-This project is licensed under the MIT License.
+Buckalew-CRM-Automation/
+├── README.md
+├── .env                          # API keys
+├── CRM_Automation_Setup_Guide.md # Detailed setup guide
+└── workflows/
+    ├── 01_new_lead_followup.py
+    ├── 02_client_onboarding.py
+    ├── 03_appointment_reminders.py
+    ├── 04_lead_scoring.py
+    └── 05_reengagement.py
+```
