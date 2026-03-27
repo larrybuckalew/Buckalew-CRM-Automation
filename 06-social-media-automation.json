@@ -1,0 +1,169 @@
+{
+  "name": "Insurance Social Media Content Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "cron": [
+            { "field": "cron", "hour": "9,12,17", "minute": 0 }
+          ],
+          "timezone": "America/New_York"
+        }
+      },
+      "id": "daily-trigger",
+      "name": "Daily Triggers (9AM, 12PM, 5PM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate insurance-themed social media content\nconst today = new Date();\nconst dayOfWeek = today.getDay();\nconst month = today.getMonth();\n\n// Content calendar based on day/month\nconst contentTemplates = {\n  monday: {\n    topic: 'Medicare/Life Insurance Education',\n    hooks: [\n      'Starting a new week with a reminder: Your health is your wealth. Have you reviewed your Medicare coverage lately?',\n      'Monday motivation: The best time to plan for healthcare is before you need it. When did you last review your coverage?',\n      'Medicare question: Do you know the difference between Medicare Advantage and Medicare Supplement? Most people don\\'t — and that\\'s okay! We\\'re here to help.'\n    ]\n  },\n  tuesday: {\n    topic: 'Final Expense / Life Insurance',\n    hooks: [\n      'A question worth asking: Has your family discussed final expense planning? It\\'s not fun, but it\\'s one of the most loving things you can do.',\n      'Life insurance isn\\'t about death — it\\'s about protecting the people you love while they\\'re still here.',\n      'Final expense insurance: A small monthly premium can mean your family doesn\\'t have to worry about burial costs.'\n    ]\n  },\n  wednesday: {\n    topic: 'Medicare Enrollment / Dates',\n    hooks: [\n      '⏰ Did you know? Medicare Annual Enrollment runs October 15 – December 7. If you\\'re on Medicare, now is the time to review your plan.',\n      'Turning 65 soon? Your Initial Enrollment Period starts 3 months before your birthday month. Don\\'t miss it!',\n      'Medicare enrollment mistakes can be costly. Here\\'s what you need to know before you enroll...'\n    ]\n  },\n  thursday: {\n    topic: 'Health & Wellness Connection',\n    hooks: [\n      'Your health and your insurance coverage are more connected than you think. Regular checkups + right coverage = peace of mind.',\n      'Prevention is the best medicine — but it still costs something. Make sure you\\'re covered!',\n      'Health tip: An ounce of prevention is worth a pound of cure. And the right insurance makes prevention affordable.'\n    ]\n  },\n  friday: {\n    topic: 'Client Success / Testimonial Friday',\n    hooks: [\n      '🎉 Success story: \"I saved $200/month on my Medicare plan!\" If you\\'d like a free quote review, let us know.',\n      'Friday feelings: Peace of mind about your healthcare coverage is one of the best gifts you can give yourself.',\n      'TGIF! Questions about Medicare, health insurance, or life insurance? Drop them below — we\\'re happy to help!'\n    ]\n  },\n  saturday: {\n    topic: 'Weekend Inspiration',\n    hooks: [\n      'Weekend reading: The top 3 Medicare mistakes people make (and how to avoid them).',\n      'Saturday thought: Insurance is like a parachute. You don\\'t want to find out you needed it and didn\\'t have it.',\n      'Use your weekend time wisely: Review your coverage. It takes 15 minutes and could save you thousands.'\n    ]\n  },\n  sunday: {\n    topic: 'Sunday Prep / Coming Week',\n    hooks: [\n      'Sunday prep: Make a list of questions about your insurance for the week ahead. We\\'re here to answer them.',\n      'The new week is coming. Make sure your health coverage is ready for whatever comes.',\n      'Self-care Sunday: Part of taking care of yourself is making sure you\\'re protected financially.'\n    ]\n  }\n};\n\nconst dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];\nconst template = contentTemplates[dayNames[dayOfWeek]];\n\n// Rotate hooks based on day of year\nconst dayOfYear = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / (24 * 60 * 60 * 1000));\nconst hookIndex = dayOfYear % template.hooks.length;\nconst hook = template.hooks[hookIndex];\n\n// Call to action\nconst ctas = [\n  '📞 Questions? DM us or call 813-863-5917',\n  '💬 Comment below if you\\'d like to learn more!',\n  '🔖 Save this post for later!',\n  '📩 Send us a message for a free quote review',\n  '👇 Tag someone who should see this!'\n];\nconst cta = ctas[dayOfYear % ctas.length];\n\n// Hashtags\nconst hashtags = '#Medicare #HealthInsurance #LifeInsurance #FinalExpense #InsurancePlanning #BuckalewFinancial';\n\nreturn {\n  content: `${hook}\\n\n${cta}\\n\n${hashtags}`,\n  topic: template.topic,\n  hook: hook,\n  dayOfWeek: dayNames[dayOfWeek],\n  characterCount: `${hook}\\n\\n${cta}\\n\\n${hashtags}`.length,\n  scheduledTime: dayOfWeek === 0 || dayOfWeek === 6 ? 'Saturday/Sunday' : 'Weekday'\n};"
+      },
+      "id": "generate-content",
+      "name": "Generate Social Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            { "id": "char-limit", "leftValue": "={{$json.characterCount}}", "rightValue": 280, "operator": { "type": "number", "operation": "lte" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "length-check",
+      "name": "Character Count Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// For long content, split into thread\nconst c = $input.first().json;\nreturn {\n  ...c,\n  thread: true,\n  mainTweet: c.hook.substring(0, 260) + '...',\n  replyTweet: `(1/2) ${c.hook}\\n\\nContinuing...`,\n  finalTweet: `(2/2) ${c.cta}\\n\\n${c.content.split('\\n\\n').pop()}`, // hashtags\n  content: `[Thread] ${c.content}`\n};"
+      },
+      "id": "make-thread",
+      "name": "Convert to Thread",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://api.x.com/2/tweets",
+        "requestMethod": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.X_BEARER_TOKEN}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "text", "value": "={{$json.content}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "post-to-x",
+      "name": "Post to X/Twitter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "requestMethod": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.LINKEDIN_ACCESS_TOKEN}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Restli-Protocol-Version", "value": "2.0.0" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "author", "value": "{{$env.LINKEDIN_PERSON_URN}}" },
+            { "name": "lifecycleState", "value": "PUBLISHED" },
+            { "name": "specificContent", "value": "={\"com.linkedin.ugc.ShareContent\":{\"shareCommentary\":{\"text\":\"{{$json.content}}\"},\"shareMediaCategory\": \"NONE\"}}" },
+            { "name": "visibility", "value": "{\"com.linkedin.ugc.MemberNetworkVisibility\": \"PUBLIC\"}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "post-to-linkedin",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "chat_id", "value": "{{$env.TELEGRAM_CHAT_ID}}" },
+            { "name": "text", "value": "📱 *Social Media Post Published*\\n\\n*Topic:* {{$json.topic}}\\n*Platforms:* X/Twitter, LinkedIn\\n*Character Count:* {{$json.characterCount}}\\n\\n*Content:*\\n{{$json.content}}\\n\\n✅ Posted successfully" },
+            { "name": "parse_mode", "value": "Markdown" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "telegram-success",
+      "name": "Telegram Success Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1420, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/?locationId=GXAzp8lTmMJ93EPLDBmW&limit=10",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-recent-leads",
+      "name": "Get Recent Leads for Engagement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1640, 300]
+    }
+  ],
+  "connections": {
+    "Daily Triggers (9AM, 12PM, 5PM)": { "main": [[{ "node": "Generate Social Content", "type": "main", "index": 0 }]] },
+    "Generate Social Content": { "main": [[{ "node": "Character Count Check", "type": "main", "index": 0 }]] },
+    "Character Count Check": {
+      "main": [
+        [{ "node": "Post to X/Twitter", "type": "main", "index": 0 }],
+        [{ "node": "Convert to Thread", "type": "main", "index": 0 }]
+      ]
+    },
+    "Convert to Thread": { "main": [[{ "node": "Post to X/Twitter", "type": "main", "index": 0 }]] },
+    "Post to X/Twitter": { "main": [[{ "node": "Post to LinkedIn", "type": "main", "index": 0 }]] },
+    "Post to LinkedIn": { "main": [[{ "node": "Telegram Success Alert", "type": "main", "index": 0 }]] },
+    "Telegram Success Alert": { "main": [[{ "node": "Get Recent Leads for Engagement", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": ["social-media", "insurance", "automation", "content"],
+  "meta": { "templateCredsSetupCount": 0, "templateId": "insurance-social-media" }
+}
