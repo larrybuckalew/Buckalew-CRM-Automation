@@ -1,0 +1,166 @@
+{
+  "name": "Client Birthday & Medicare Milestone Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "cron": [{ "field": "cron", "hour": 9, "minute": 0, "monthOfYear": "1;2;3;4;5;6;7;8;9;10;11;12" }],
+          "timezone": "America/New_York"
+        }
+      },
+      "id": "daily-trigger",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/?locationId=GXAzp8lTmMJ93EPLDBmW&limit=200",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-contacts",
+      "name": "Get All Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find contacts with birthdays in next 7 days\nconst today = new Date();\nconst todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD\n\nconst contacts = $input.all();\nconst milestoneContacts = [];\n\nfor (const wrapper of contacts) {\n  const c = wrapper.json;\n  \n  // Look for birthday custom field\n  const bdayField = c.customFields?.find(f => \n    f.key === 'birthday' || \n    f.key === 'date_of_birth' || \n    f.key === 'dob'\n  );\n  if (!bdayField?.value) continue;\n  \n  const bday = new Date(bdayField.value);\n  if (isNaN(bday.getTime())) continue;\n  \n  // Get birthday this year\n  const thisYearBday = new Date(today.getFullYear(), bday.getMonth(), bday.getDate());\n  \n  // Calculate age\n  const age = today.getFullYear() - bday.getFullYear();\n  \n  // Check if birthday is in next 7 days\n  const msPerDay = 24 * 60 * 60 * 1000;\n  const daysUntilBday = Math.round((thisYearBday - today) / msPerDay);\n  \n  // Normalize to positive (handle Jan birthdays from previous year)\n  const adjustedDaysUntil = daysUntilBday < -180 ? daysUntilBday + 365 : daysUntilBday;\n  \n  if (adjustedDaysUntil >= 0 && adjustedDaysUntil <= 7) {\n    // Determine milestone type\n    let milestone = null;\n    if (age + 1 === 65) milestone = 'Turning 65 - Medicare Eligible';\n    else if (age + 1 === 70) milestone = 'Turning 70 - Final Expense Age';\n    else if (age + 1 === 64) milestone = 'Pre-Medicare - 1 Year Away';\n    else if ((age + 1) % 5 === 0) milestone = `Turning ${age + 1} - Milestone Birthday`;\n    \n    milestoneContacts.push({\n      ...c,\n      birthday: bdayField.value,\n      birthdayThisYear: thisYearBday.toISOString().split('T')[0],\n      age,\n      daysUntil: adjustedDaysUntil,\n      milestone,\n      isTurning65: age + 1 === 65\n    });\n  }\n}\n\nreturn milestoneContacts;"
+      },
+      "id": "find-birthday-contacts",
+      "name": "Find Birthday Contacts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            { "id": "has-email", "leftValue": "={{$json.email}}", "rightValue": "", "operator": { "type": "string", "operation": "notExists" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-valid",
+      "name": "Filter Valid Contacts",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate birthday greeting based on milestone type\nconst c = $input.first().json;\n\nconst isTurning65 = c.isTurning65;\n\nconst subject = isTurning65 \n  ? `🎂 Your 65th Birthday is Coming Up - Important Medicare Information`\n  : `🎂 Happy Upcoming Birthday, ${c.firstName || 'Friend'}!`;\n\nconst html = isTurning65 ? `\n  <h1>🎂 Congratulations on Approaching Medicare Eligibility!</h1>\n  <p>Dear ${c.firstName || 'Friend'},</p>\n  <p>Your 65th birthday is coming up in just <strong>${c.daysUntil} days</strong> — congratulations!</p>\n  <p>This is a major milestone, and more importantly, it marks your eligibility for Medicare — the federal health insurance program that could save you thousands on healthcare.</p>\n  \n  <h2>What You Need to Know:</h2>\n  <ul>\n    <li>You're eligible for Medicare 3 months before your 65th birthday month</li>\n    <li>Your Initial Enrollment Period lasts 7 months (3 months before, the birthday month, and 3 months after)</li>\n    <li>Missing this window could mean higher premiums for life</li>\n  </ul>\n  \n  <p><strong>Schedule a free consultation</strong> and let us help you navigate your Medicare options — at no cost to you.</p>\n  \n  <p><a href=\"https://buckalewfinancialservices.com/schedule\">📅 Book Your Free Medicare Review</a></p>\n  <p><a href=\"https://buckalewfinancialservices.com/medicare-guide\">📖 Download Your Free Medicare Guide</a></p>\n  \n  <p>Warm regards,<br/>The Buckalew Financial Team<br/><em>Licensed in FL, TX, CA, NC, SC, MI | W248767</em></p>\n` : `\n  <h1>🎂 Happy Upcoming Birthday!</h1>\n  <p>Dear ${c.firstName || 'Friend'},</p>\n  <p>We just wanted to wish you a wonderful upcoming birthday and thank you for being a valued client.</p>\n  <p>As always, if you have any insurance needs or questions, we're here to help.</p>\n  <p><a href=\"https://buckalewfinancialservices.com/schedule\">📅 Schedule a Free Review</a></p>\n  <p>Warm regards,<br/>The Buckalew Financial Team</p>\n`;\n\nreturn { ...c, subject, html, milestoneType: isTurning65 ? 'medicare' : 'general' };"
+      },
+      "id": "generate-birthday-content",
+      "name": "Generate Birthday Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "={{$json.subject}}",
+        "html": "={{$json.html}}",
+        "options": {}
+      },
+      "id": "send-birthday-email",
+      "name": "Send Birthday Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.id}}/tags",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "tags", "value": "=[\"Birthday Nurture\", \"{{$json.milestoneType === 'medicare' ? 'Medicare Milestone' : 'General Birthday'}}\", \"{{$json.milestone || ''}}\"]" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-tags",
+      "name": "Update CRM Tags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1420, 300]
+    },
+    {
+      "parameters": {
+        "operation": "schedule",
+        "entityType": "contact",
+        "contactId": "={{$json.id}}",
+        "rule": { "frequency": "once", "day": 1, "month": "day", "hour": 10, "minute": 0 },
+        "title": "Follow up with {{$json.firstName}} - Birthday/Milestone",
+        "assignedTo": "={{$env.AGENT_USER_ID}}",
+        "notes": "Milestone birthday outreach. {{$json.milestone}}. Schedule insurance review conversation."
+      },
+      "id": "create-review-task",
+      "name": "Create Review Task",
+      "type": "n8n-nodes-base.goHighLevel",
+      "typeVersion": 1,
+      "position": [1640, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "chat_id", "value": "{{$env.TELEGRAM_CHAT_ID}}" },
+            { "name": "text", "value": "🎂 *Milestone Birthday Alert*\\n\\n*Name:* {{$json.firstName}} {{$json.lastName}}\\n*Birthday:* {{$json.birthdayThisYear}} ({{$json.age}} turning {{$json.age+1}})\\n*Milestone:* {{$json.milestone}}\\n*Email:* {{$json.email}}\\n\\n{{$json.milestoneType === 'medicare' ? '🎯 HIGH PRIORITY - Medicare enrollment opportunity!' : ''}}" },
+            { "name": "parse_mode", "value": "Markdown" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "telegram-alert",
+      "name": "Telegram Milestone Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1860, 300]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": { "main": [[{ "node": "Get All Contacts", "type": "main", "index": 0 }]] },
+    "Get All Contacts": { "main": [[{ "node": "Find Birthday Contacts", "type": "main", "index": 0 }]] },
+    "Find Birthday Contacts": { "main": [[{ "node": "Filter Valid Contacts", "type": "main", "index": 0 }]] },
+    "Filter Valid Contacts": { "main": [[{ "node": "Generate Birthday Content", "type": "main", "index": 0 }]] },
+    "Generate Birthday Content": { "main": [[{ "node": "Send Birthday Email", "type": "main", "index": 0 }]] },
+    "Send Birthday Email": { "main": [[{ "node": "Update CRM Tags", "type": "main", "index": 0 }]] },
+    "Update CRM Tags": { "main": [[{ "node": "Create Review Task", "type": "main", "index": 0 }]] },
+    "Create Review Task": { "main": [[{ "node": "Telegram Milestone Alert", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": ["insurance", "milestone", "birthday", "medicare", "retention"],
+  "meta": { "templateCredsSetupCount": 0, "templateId": "birthday-medicare-milestone" }
+}

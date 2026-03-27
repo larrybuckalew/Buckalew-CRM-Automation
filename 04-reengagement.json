@@ -1,0 +1,168 @@
+{
+  "name": "Lead Re-engagement Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "cronExpression": "0 9 * * 1" },
+        "activate": true,
+        "timezone": "America/New_York"
+      },
+      "id": "weekly-trigger",
+      "name": "Weekly Monday 9AM",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/?locationId=GXAzp8lTmMJ93EPLDBmW&limit=100",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        }
+      },
+      "id": "get-contacts",
+      "name": "Get All Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter contacts with no engagement in 45, 60, or 90 days\nconst contacts = $input.all();\nconst now = new Date();\n\nconst reengagementTiers = [];\n\nfor (const item of contacts) {\n  const c = item.json;\n  // Skip if already tagged as re-engagement complete or unsubscribed\n  const tags = c.tags || [];\n  if (tags.includes('Re-engagement Complete') || tags.includes('Unsubscribed')) continue;\n  \n  // Last contact date from GHL (use dateAdded as proxy if no engagement field)\n  const lastEngaged = c.lastActivityDate || c.dateAdded;\n  if (!lastEngaged) {\n    // No engagement history - use dateAdded\n    const addedDate = new Date(c.dateAdded);\n    const daysSinceAdded = Math.floor((now - addedDate) / (1000 * 60 * 60 * 24));\n    if (daysSinceAdded >= 45) {\n      reengagementTiers.push({ ...c, daysSince: daysSinceAdded, tier: daysSinceAdded >= 90 ? 3 : daysSinceAdded >= 60 ? 2 : 1 });\n    }\n    continue;\n  }\n  \n  const lastDate = new Date(lastEngaged);\n  const daysSince = Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));\n  \n  if (daysSince >= 45) {\n    reengagementTiers.push({ ...c, daysSince, tier: daysSince >= 90 ? 3 : daysSince >= 60 ? 2 : 1 });\n  }\n}\n\n// Sort by tier (most disengaged first)\nreengagementTiers.sort((a, b) => b.tier - a.tier);\nreturn reengagementTiers.map(c => ({ json: c }));"
+      },
+      "id": "filter-inactive",
+      "name": "Find Inactive Contacts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            { "id": "tier-1", "leftValue": "={{$json.tier}}", "rightValue": 1, "operator": { "type": "number", "operation": "equals" } }
+          ]
+        }
+      },
+      "id": "tier-1-check",
+      "name": "Tier 1 (45 days)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 150]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            { "id": "tier-2", "leftValue": "={{$json.tier}}", "rightValue": 2, "operator": { "type": "number", "operation": "equals" } }
+          ]
+        }
+      },
+      "id": "tier-2-check",
+      "name": "Tier 2 (60 days)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            { "id": "tier-3", "leftValue": "={{$json.tier}}", "rightValue": 3, "rightValue": "", "operator": { "type": "number", "operation": "gt" } }
+          ]
+        }
+      },
+      "id": "tier-3-check",
+      "name": "Tier 3 (90+ days)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 450]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "Hi {{$json.firstName}}, quick question",
+        "html": "<p>Hi {{$json.firstName}},</p><p>I wanted to check in — it's been a while since we last connected. Have you had any changes to your health coverage or insurance needs?</p><p>If anything has changed or if you'd like to review your current coverage, I'm here to help.</p><p>Reply to this email or <a href=\"https://buckalewfinancialservices.com/contact\">book a free call</a>.</p><p>To your health,<br/>Larry</p>"
+      },
+      "id": "email-tier1",
+      "name": "Tier 1 Re-engagement Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [980, 100]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "{{$json.firstName}}, are you still there?",
+        "html": "<p>Hi {{$json.firstName}},</p><p>I haven't heard from you in a while and just wanted to make sure you have the coverage you need.</p><p>Many people don't realize that health and insurance needs change over time. If your situation has changed or if you want to explore your options, I'd love to connect.</p><p><a href=\"https://buckalewfinancialservices.com/medicare-resources\">Read our Medicare guide</a> or <a href=\"https://buckalewfinancialservices.com/contact\">schedule a free consultation</a>.</p><p>Warm regards,<br/>Larry Buckalew<br/>Buckalew Financial Services</p>"
+      },
+      "id": "email-tier2",
+      "name": "Tier 2 Re-engagement Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "{{$json.firstName}}, we miss you + a special offer",
+        "html": "<p>Hi {{$json.firstName}},</p><p>It's been a while! I wanted to reach out with something that might interest you.</p><p>We've just published new resources comparing 2026 Medicare plans in Florida. If you're approaching Medicare eligibility or want to review your current coverage, this might be helpful.</p><p><a href=\"https://buckalewfinancialservices.com/medicare-resources\">View Medicare Resources →</a></p><p>If you're not looking for insurance help right now, just reply and I'll make sure not to reach out again. No hard feelings!</p><p>To your health,<br/>Larry</p>"
+      },
+      "id": "email-tier3",
+      "name": "Tier 3 Re-engagement Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [980, 500]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.id}}/tags",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "tags", "value": "=[\"Re-engagement Attempt Tier {{$json.tier}}\"]" }
+          ]
+        }
+      },
+      "id": "update-reengagement-tag",
+      "name": "Update Re-engagement Tag",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Weekly Monday 9AM": { "main": [[{ "node": "Get All Contacts", "type": "main", "index": 0 }]] },
+    "Get All Contacts": { "main": [[{ "node": "Find Inactive Contacts", "type": "main", "index": 0 }]] },
+    "Find Inactive Contacts": { "main": [[{ "node": "Tier 1 (45 days)", "type": "main", "index": 0 }]] },
+    "Tier 1 (45 days)": { "main": [[{ "node": "Tier 2 (60 days)", "type": "main", "index": 0 }], [{ "node": "Tier 1 Re-engagement Email", "type": "main", "index": 0 }]] },
+    "Tier 2 (60 days)": { "main": [[{ "node": "Tier 3 (90+ days)", "type": "main", "index": 0 }], [{ "node": "Tier 2 Re-engagement Email", "type": "main", "index": 0 }]] },
+    "Tier 3 (90+ days)": { "main": [[], [{ "node": "Tier 3 Re-engagement Email", "type": "main", "index": 0 }]] },
+    "Tier 1 Re-engagement Email": { "main": [[{ "node": "Update Re-engagement Tag", "type": "main", "index": 0 }]] },
+    "Tier 2 Re-engagement Email": { "main": [[{ "node": "Update Re-engagement Tag", "type": "main", "index": 0 }]] },
+    "Tier 3 Re-engagement Email": { "main": [[{ "node": "Update Re-engagement Tag", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["insurance", "re-engagement", "lead-nurture"],
+  "meta": { "templateCredsSetupCount": 0 }
+}

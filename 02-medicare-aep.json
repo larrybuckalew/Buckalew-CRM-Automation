@@ -1,0 +1,131 @@
+{
+  "name": "Medicare Annual Enrollment Alert Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "cronExpression": "0 9 1 9,10,11,12 *" },
+        "activate": true,
+        "timezone": "America/New_York"
+      },
+      "id": "aep-trigger",
+      "name": "AEP Season Trigger (Sept-Dec)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/?locationId=GXAzp8lTmMJ93EPLDBmW&limit=100",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        }
+      },
+      "id": "get-contacts",
+      "name": "Get All BFS Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter contacts approaching Medicare eligibility (64.5+ in next 60 days or already 65)\nconst contacts = $input.all();\nconst today = new Date();\nconst sixtyDaysFromNow = new Date(today.getTime() + 60 * 24 * 60 * 60 * 1000);\n\nconst eligible = [];\n\nfor (const item of contacts) {\n  const c = item.json;\n  // Check custom fields for birthdate or age\n  const birthDate = c.dateOfBirth || c.customFields?.find(f => f.key === 'date_of_birth')?.value;\n  const ageField = c.customFields?.find(f => f.key === 'age')?.value;\n  \n  let age = parseInt(ageField) || 0;\n  if (birthDate) {\n    const bd = new Date(birthDate);\n    age = today.getFullYear() - bd.getFullYear();\n  }\n  \n  // Medicare eligible = 65 or turning 65 within 60 days\n  if (age >= 64.5 && age <= 67) {\n    eligible.push({\n      ...c,\n      calculatedAge: age,\n      eligibilityNote: age >= 65 ? 'Already Medicare eligible' : 'Turning 65 soon'\n    });\n  }\n}\n\nreturn eligible.map(c => ({ json: c }));"
+      },
+      "id": "filter-medicare",
+      "name": "Filter Medicare Eligible",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "id": "has-contact", "leftValue": "={{$json.id}}", "rightValue": "", "operator": { "type": "string", "operation": "exists" } }]
+        }
+      },
+      "id": "contact-exists",
+      "name": "Has Contact ID",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "chat_id", "value": "{{$env.TELEGRAM_CHAT_ID}}" },
+            { "name": "text", "value": "📅 *Medicare Enrollment Alert*\\n\\nSending AEP outreach to {{$json.count || 0}} contacts approaching Medicare eligibility.\\n\\n*Date:* {{$now}}\\n*Season:* Annual Enrollment Period" },
+            { "name": "parse_mode", "value": "Markdown" }
+          ]
+        }
+      },
+      "id": "agent-notify",
+      "name": "Notify Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [980, 200]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "Medicare Open Enrollment is Here – Review Your Options",
+        "html": "<h1>Medicare Open Enrollment</h1><p>Hi {{$json.firstName || 'there'}},</p><p>Medicare Open Enrollment runs October 15 – December 7. This is your chance to review your coverage for 2026.</p><h3>What's New for 2026:</h3><ul><li>Updated Medicare Part D prescription drug coverage</li><li>New Medicare Advantage plan options</li><li>Potential changes to your current plan</li></ul><p><strong>Book a free consultation</strong> to make sure you're on the best plan for your needs.</p><p><a href=\"https://buckalewfinancialservices.com/medicare-enrollment\">Schedule Your Review →</a></p><p>To your health,<br/>Larry Buckalew<br/>Buckalew Financial Services</p>",
+        "options": {}
+      },
+      "id": "aep-email",
+      "name": "Send AEP Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [980, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.id}}/tags",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "tags", "value": "=[\"Medicare AEP Outreach\", \"2026 Enrollment\"]" }
+          ]
+        }
+      },
+      "id": "tag-aep",
+      "name": "Tag AEP Outreach Sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1200, 400]
+    }
+  ],
+  "connections": {
+    "AEP Season Trigger (Sept-Dec)": { "main": [[{ "node": "Get All BFS Contacts", "type": "main", "index": 0 }]] },
+    "Get All BFS Contacts": { "main": [[{ "node": "Filter Medicare Eligible", "type": "main", "index": 0 }]] },
+    "Filter Medicare Eligible": { "main": [[{ "node": "Has Contact ID", "type": "main", "index": 0 }]] },
+    "Has Contact ID": {
+      "main": [
+        [{ "node": "Notify Agent", "type": "main", "index": 0 }],
+        [{ "node": "Send AEP Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send AEP Email": { "main": [[{ "node": "Tag AEP Outreach Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["insurance", "medicare", "aep", "enrollment"],
+  "meta": { "templateCredsSetupCount": 0 }
+}

@@ -1,0 +1,172 @@
+{
+  "name": "Medicare AEP Enrollment Alert Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "cron": [
+            {
+              "field": "cron",
+              "hour": 8,
+              "minute": 0,
+              "dayOfMonth": 1,
+              "monthOfYear": "SEP;OCT;NOV;DEC;JAN"
+            }
+          ],
+          "timezone": "America/New_York"
+        }
+      },
+      "id": "aep-trigger",
+      "name": "AEP Season Trigger (Sept-Jan)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/?locationId=GXAzp8lTmMJ93EPLDBmW&limit=100",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-all-contacts",
+      "name": "Get All Buckalew Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter contacts approaching Medicare eligibility (turning 65 in next 60 days)\n// Also identify existing Medicare clients during AEP\n\nconst today = new Date();\nconst contacts = $input.all();\n\nconst eligibleContacts = [];\n\nfor (const contactWrapper of contacts) {\n  const contact = contactWrapper.json;\n  \n  // Skip if no birthday field\n  const birthdayField = contact.customFields?.find(f => f.key === 'birthday' || f.key === 'date_of_birth');\n  if (!birthdayField) continue;\n  \n  const birthDate = new Date(birthdayField.value);\n  if (isNaN(birthDate.getTime())) continue;\n  \n  // Calculate age at end of current year\n  const turning65Date = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());\n  const ageThisYear = today.getFullYear() - birthDate.getFullYear();\n  \n  // Check if turning 65 within next 60 days or in current year\n  const sixtyDaysFromNow = new Date(today.getTime() + (60 * 24 * 60 * 60 * 1000));\n  \n  if (turning65Date >= today && turning65Date <= sixtyDaysFromNow) {\n    eligibleContacts.push({\n      ...contact,\n      turning65Date: turning65Date.toISOString(),\n      monthsUntil65: Math.ceil((turning65Date - today) / (30 * 24 * 60 * 60 * 1000)),\n      segment: 'Turning 65 Soon'
+    });\n  } else if (ageThisYear >= 65) {\n    // Already on Medicare - check if they need review\n    const tags = contact.tags || [];\n    if (!tags.includes('Medicare Client') && !tags.includes('AEP Contacted')) {\n      eligibleContacts.push({\n        ...contact,\n        ageThisYear,\n        segment: 'Medicare Client Review'\n      });\n    }\n  }\n}\n\nreturn eligibleContacts.slice(0, 50); // Process max 50 at a time"
+      },
+      "id": "filter-medicare-eligible",
+      "name": "Filter Medicare Eligible",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            { "id": "has-email", "leftValue": "={{$json.email}}", "rightValue": "", "operator": { "type": "string", "operation": "notExists" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "skip-no-email",
+      "name": "Skip If No Email",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine which email sequence to send based on segment\nconst contact = $input.first().json;\n\nconst subjectLines = {\n  'Turning 65 Soon': 'Are You Turning 65 Soon? Here\\'s What You Need to Know About Medicare',\n  'Medicare Client Review': 'Review Your Medicare Coverage Before Annual Enrollment Ends'\n};\n\nconst htmlContent = {\n  'Turning 65 Soon': `\n    <h1>Congratulations on Approaching Medicare Eligibility!</h1>\n    <p>Dear ${contact.firstName || 'Friend'},</p>\n    <p>As you approach your 65th birthday, you may be eligible for Medicare — the federal health insurance program that could significantly reduce your healthcare costs.</p>\n    <h2>Key Medicare Decisions You\\'ll Need to Make:</h2>\n    <ul>\n      <li><strong>Part A (Hospital Insurance)</strong> — Usually premium-free if you or your spouse paid Medicare taxes</li>\n      <li><strong>Part B (Medical Insurance)</strong> — Standard premium, covers doctor visits and outpatient care</li>\n      <li><strong>Part D (Prescription Drug Coverage)</strong> — Helps cover medication costs</li>\n      <li><strong>Medicare Advantage (Part C)</strong> — All-in-one alternative to Original Medicare</li>\n    </ul>\n    <p>Our licensed agents are here to help you navigate these choices — <strong>at no cost to you</strong>.</p>\n    <p><a href=\"https://buckalewfinancialservices.com/medicare-guide\">📖 Download Our Free Medicare Guide</a></p>\n    <p><a href=\"https://buckalewfinancialservices.com/schedule\">📅 Schedule a Free Consultation</a></p>\n    <p>Warm regards,<br/>The Buckalew Financial Team</p>\n    <p style=\"font-size:12px;color:#666;\">Licensed in FL, TX, CA, NC, SC, MI | W248767</p>\n  `,\n  'Medicare Client Review': `\n    <h1>Annual Enrollment Period — Review Your Coverage</h1>\n    <p>Dear ${contact.firstName || 'Valued Client'},</p>\n    <p>The Medicare Annual Enrollment Period runs through December 7th. This is your chance to review your current coverage and make sure you have the best plan for the coming year.</p>\n    <h2>Consider Reviewing:</h2>\n    <ul>\n      <li>Are your doctors still in-network?</li>\n      <li>Have your prescription needs changed?</li>\n      <li>Is your premium still competitive?</li>\n      <li>Do you have the right level of coverage?</li>\n    </ul>\n    <p>Medicare plans and pricing change annually — what worked last year may not be optimal this year.</p>\n    <p><a href=\"https://buckalewfinancialservices.com/medicare-enrollment\">🔍 Get Your Free Plan Review</a></p>\n    <p><a href=\"https://buckalewfinancialservices.com/schedule\">📅 Schedule Your Review Today</a></p>\n    <p>Warm regards,<br/>The Buckalew Financial Team</p>\n    <p style=\"font-size:12px;color:#666;\">Licensed in FL, TX, CA, NC, SC, MI | W248767</p>\n  `\n};\n\nreturn {\n  segment: contact.segment,\n  subject: subjectLines[contact.segment] || subjectLines['Medicare Client Review'],\n  html: htmlContent[contact.segment] || htmlContent['Medicare Client Review']\n};"
+      },
+      "id": "generate-aep-content",
+      "name": "Generate AEP Email Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "={{$json.subject}}",
+        "html": "={{$json.html}}",
+        "options": {}
+      },
+      "id": "send-aep-email",
+      "name": "Send AEP Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.id}}/tags",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "tags", "value": "=[\"AEP Contacted\", \"Medicare\", \"{{$json.segment}}\"]" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tag-aep-contacted",
+      "name": "Tag as AEP Contacted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1420, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "chat_id", "value": "{{$env.TELEGRAM_CHAT_ID}}" },
+            { "name": "text", "value": "📊 *AEP Campaign Update*\\n\\nSent Medicare enrollment email to:\\n*Name:* {{$json.firstName}} {{$json.lastName}}\\n*Segment:* {{$json.segment}}\\n*Email:* {{$json.email}}\\n\\nTotal AEP contacts processed today" },
+            { "name": "parse_mode", "value": "Markdown" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aep-telegram-notify",
+      "name": "Telegram AEP Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1640, 300]
+    }
+  ],
+  "connections": {
+    "AEP Season Trigger (Sept-Jan)": {
+      "main": [[{ "node": "Get All Buckalew Contacts", "type": "main", "index": 0 }]]
+    },
+    "Get All Buckalew Contacts": {
+      "main": [[{ "node": "Filter Medicare Eligible", "type": "main", "index": 0 }]]
+    },
+    "Filter Medicare Eligible": {
+      "main": [[{ "node": "Skip If No Email", "type": "main", "index": 0 }]]
+    },
+    "Skip If No Email": {
+      "main": [[{ "node": "Generate AEP Email Content", "type": "main", "index": 0 }]]
+    },
+    "Generate AEP Email Content": {
+      "main": [[{ "node": "Send AEP Email", "type": "main", "index": 0 }]]
+    },
+    "Send AEP Email": {
+      "main": [[{ "node": "Tag as AEP Contacted", "type": "main", "index": 0 }]]
+    },
+    "Tag as AEP Contacted": {
+      "main": [[{ "node": "Telegram AEP Summary", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": ["insurance", "medicare", "aep", "enrollment"],
+  "meta": { "templateCredsSetupCount": 0, "templateId": "medicare-aep-alert" }
+}

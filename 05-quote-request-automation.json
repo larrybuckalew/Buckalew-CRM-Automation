@@ -1,0 +1,244 @@
+{
+  "name": "Insurance Quote Request Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] }
+      },
+      "id": "form-poll",
+      "name": "Form Poll Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/hooks/YOUR_FORM_ID_HERE/catch",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "specifyHeaders": "expression",
+        "headerParameters": { "parameters": [] },
+        "sendQuery": true,
+        "specifyQuery": "expression",
+        "queryParameters": { "parameters": [] },
+        "info": "Replace YOUR_FORM_ID_HERE with your GHL Quote Request Form ID"
+      },
+      "id": "form-trigger",
+      "name": "Quote Form Trigger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and validate quote request data\nconst data = $input.first().json;\n\n// Normalize field names (form may send various formats)\nconst firstName = data.first_name || data.firstName || data.fname || '';\nconst lastName = data.last_name || data.lastName || data.lname || '';\nconst email = data.email || data.email_address || '';\nconst phone = data.phone || data.phone_number || data.tel || '';\nconst state = (data.state || data.us_state || '').toUpperCase().substring(0, 2);\nconst coverageType = (data.coverage_type || data.coverage || data.type || 'health').toLowerCase();\nconst coverageAmount = data.coverage_amount || data.coverageAmount || data.loan_amount || 0;\nconst birthDate = data.birth_date || data.birthDate || data.dob || '';\nconst age = birthDate ? Math.floor((new Date() - new Date(birthDate)) / (365.25 * 24 * 60 * 60 * 1000)) : 0;\n\n// Validate required fields\nconst errors = [];\nif (!firstName) errors.push('Missing first name');\nif (!email) errors.push('Missing email');\nif (!phone) errors.push('Missing phone');\n\n// Check licensed states (FL, TX, CA, NC, SC, MI)\nconst licensedStates = ['FL', 'TX', 'CA', 'NC', 'SC', 'MI'];\nconst isLicensedState = licensedStates.includes(state);\n\n// Determine coverage type\nlet coverageLabel = 'Health Insurance';\nif (coverageType.includes('life')) coverageLabel = 'Life Insurance';\nelse if (coverageType.includes('medicare')) coverageLabel = 'Medicare';\nelse if (coverageType.includes('final') || coverageType.includes('expense')) coverageLabel = 'Final Expense';\nelse if (coverageType.includes('supplement')) coverageLabel = 'Medicare Supplement';\n\nreturn {\n  firstName, lastName, email, phone, state, coverageType,\n  coverageAmount, birthDate, age, coverageLabel,\n  isLicensedState, hasErrors: errors.length > 0, errors,\n  fullName: `${firstName} ${lastName}`.trim(),\n  source: 'quote_form',\n  originalData: data\n};"
+      },
+      "id": "parse-quote",
+      "name": "Parse Quote Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            { "id": "has-errors", "leftValue": "={{$json.hasErrors}}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validation-check",
+      "name": "Validation Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [740, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "chat_id", "value": "{{$env.TELEGRAM_CHAT_ID}}" },
+            { "name": "text", "value": "⚠️ *Invalid Quote Request*\\n\\n*Name:* {{$json.fullName}}\\n*Errors:* {{$json.errors.join(', ')}}\\n\\n_Review original data manually_", "parse_mode": "Markdown" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "telegram-invalid",
+      "name": "Alert Invalid Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [960, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            { "id": "licensed-check", "leftValue": "={{$json.isLicensedState}}", "rightValue": false, "operator": { "type": "boolean", "operation": "equals" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "state-check",
+      "name": "Licensed State Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/",
+        "requestMethod": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "firstName", "value": "={{$json.firstName}}" },
+            { "name": "lastName", "value": "={{$json.lastName}}" },
+            { "name": "email", "value": "={{$json.email}}" },
+            { "name": "phone", "value": "={{$json.phone}}" },
+            { "name": "locationId", "value": "GXAzp8lTmMJ93EPLDBmW" },
+            { "name": "source", "value": "Quote Form - {{$json.coverageLabel}}" },
+            { "name": "tags", "value": "=[\"Quote Request\", \"{{$json.coverageLabel}}\", \"{{$json.state}}\"]" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create-ghl-contact",
+      "name": "Create/Update GHL Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1180, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.contact.id}}/customFields",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "customFields", "value": "=[{\"key\": \"coverage_type\", \"field_value\": \"{{$json.coverageLabel}}\"}, {\"key\": \"birth_date\", \"field_value\": \"{{$json.birthDate}}\"}, {\"key\": \"age\", \"field_value\": \"{{$json.age}}\"}, {\"key\": \"lead_source\", \"field_value\": \"quote_form\"}]" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-custom-fields",
+      "name": "Update Custom Fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "operation": "schedule",
+        "entityType": "contact",
+        "contactId": "={{$json.contact.id}}",
+        "rule": { "frequency": "once", "day": 1, "hour": 10, "minute": 0 },
+        "title": "Quote follow-up: {{$json.firstName}} {{$json.lastName}} - {{$json.coverageLabel}}",
+        "assignedTo": "={{$env.AGENT_USER_ID}}",
+        "notes": "New quote request. Coverage: {{$json.coverageLabel}}. State: {{$json.state}}. Age: {{$json.age}}. Schedule discovery call to discuss needs and provide accurate quotes."
+      },
+      "id": "create-task",
+      "name": "Create Follow-up Task",
+      "type": "n8n-nodes-base.goHighLevel",
+      "typeVersion": 1,
+      "position": [1620, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "={{$json.coverageLabel}} Quote Request Received - Buckalew Financial",
+        "html": "<h1>Thank You for Your Quote Request!</h1><p>Hi {{$json.firstName}},</p><p>We've received your request for a <strong>{{$json.coverageLabel}}</strong> quote{{$json.state ? ' in ' + (($json.state == 'FL' ? 'Florida' : $json.state == 'TX' ? 'Texas' : $json.state) + '' : ''}}.</p><p>A licensed agent will review your request and reach out within <strong>24 business hours</strong> with personalized options.</p><h2>What Happens Next:</h2><ol><li>📞 An agent will call to understand your specific needs</li><li>📊 We'll find the best plans that match your situation</li><li>📋 You'll receive 3-5 competitive quotes to compare</li></ol><p><em>No pressure, no spam — just helpful guidance.</em></p><p>In the meantime, feel free to explore:</p><ul><li><a href=\"https://buckalewfinancialservices.com/{{$json.coverageType}}-guide\">{{$json.coverageLabel}} Guide</a></li><li><a href=\"https://buckalewfinancialservices.com/resources\">Free Resources</a></li></ul><p>Warm regards,<br/>The Buckalew Financial Team<br/><em>Licensed in FL, TX, CA, NC, SC, MI | W248767</em></p>",
+        "options": {}
+      },
+      "id": "send-confirmation",
+      "name": "Send Quote Confirmation Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [1840, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "chat_id", "value": "{{$env.TELEGRAM_CHAT_ID}}" },
+            { "name": "text", "value": "📋 *New Quote Request*\\n\\n*Name:* {{$json.fullName}}\\n*Coverage:* {{$json.coverageLabel}}\\n*State:* {{$json.state}}\\n*Age:* {{$json.age}}\\n*Email:* {{$json.email}}\\n*Phone:* {{$json.phone}}\\n\\n✅ CRM contact created\\n📅 Follow-up task scheduled\\n📧 Confirmation email sent", "parse_mode": "Markdown" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "telegram-success",
+      "name": "Telegram Success Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2060, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "={{$json.coverageLabel}} Quote Request Received - Buckalew Financial",
+        "html": "<h1>Thank You for Your Quote Request</h1><p>Hi {{$json.firstName}},</p><p>We've received your request, but unfortunately we are not yet licensed in your state ({{$json.state}}).</p><p><strong>We're expanding!</strong> Enter your email below and we'll notify you the moment we become available in your area.</p><p>[Sign up for updates]</p><p>Warm regards,<br/>The Buckalew Financial Team</p>",
+        "options": {}
+      },
+      "id": "send-out-of-state",
+      "name": "Out of State Response",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [1180, 100]
+    }
+  ],
+  "connections": {
+    "Form Poll Trigger": { "main": [[{ "node": "Quote Form Trigger", "type": "main", "index": 0 }]] },
+    "Quote Form Trigger": { "main": [[{ "node": "Parse Quote Request", "type": "main", "index": 0 }]] },
+    "Parse Quote Request": { "main": [[{ "node": "Validation Check", "type": "main", "index": 0 }]] },
+    "Validation Check": {
+      "main": [
+        [{ "node": "Alert Invalid Request", "type": "main", "index": 0 }],
+        [{ "node": "Licensed State Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Licensed State Check": {
+      "main": [
+        [{ "node": "Out of State Response", "type": "main", "index": 0 }],
+        [{ "node": "Create/Update GHL Contact", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create/Update GHL Contact": { "main": [[{ "node": "Update Custom Fields", "type": "main", "index": 0 }]] },
+    "Update Custom Fields": { "main": [[{ "node": "Create Follow-up Task", "type": "main", "index": 0 }]] },
+    "Create Follow-up Task": { "main": [[{ "node": "Send Quote Confirmation Email", "type": "main", "index": 0 }]] },
+    "Send Quote Confirmation Email": { "main": [[{ "node": "Telegram Success Alert", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": ["insurance", "quote", "lead-capture", "automation"],
+  "meta": { "templateCredsSetupCount": 0, "templateId": "insurance-quote-request" }
+}

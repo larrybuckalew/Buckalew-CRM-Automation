@@ -1,0 +1,149 @@
+{
+  "name": "Lead Re-engagement Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "cron": [{ "field": "cron", "hour": 10, "minute": 0, "dayOfWeek": "MON" }],
+          "timezone": "America/New_York"
+        }
+      },
+      "id": "weekly-trigger",
+      "name": "Weekly Trigger (Mondays)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/?locationId=GXAzp8lTmMJ93EPLDBmW&limit=200",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-contacts",
+      "name": "Get All Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter contacts who haven't engaged in 45, 60, or 90+ days\nconst today = new Date();\nconst msPerDay = 24 * 60 * 60 * 1000;\n\nconst contacts = $input.all();\nconst reengagementCandidates = [];\n\nfor (const wrapper of contacts) {\n  const c = wrapper.json;\n  \n  // Skip already opted-out\n  const tags = c.tags || [];\n  if (tags.includes('Unsubscribed') || tags.includes('Do Not Contact')) continue;\n  \n  // Check last engagement date (from custom field or tag)\n  const lastEngagedField = c.customFields?.find(f => f.key === 'last_engaged_date');\n  const lastContactedField = c.customFields?.find(f => f.key === 'last_contacted_date');\n  \n  const lastEngaged = lastEngagedField?.value \n    ? new Date(lastEngagedField.value)\n    : lastContactedField?.value \n      ? new Date(lastContactedField.value)\n      : null;\n  \n  if (!lastEngaged || isNaN(lastEngaged.getTime())) {\n    // No engagement data - use creation date as proxy\n    const created = new Date(c.dateAdded || c.created_at || today);\n    const daysSince = Math.round((today - created) / msPerDay);\n    \n    if (daysSince >= 45) {\n      reengagementCandidates.push({\n        ...c,\n        lastDate: created,\n        daysSince,\n        tier: daysSince >= 90 ? 'dormant-90' : daysSince >= 60 ? 'dormant-60' : 'dormant-45',\n        attemptNumber: 0,\n        daysSinceCategory: `${daysSince} days since creation`\n      });\n    }\n    continue;\n  }\n  \n  const daysSince = Math.round((today - lastEngaged) / msPerDay);\n  \n  if (daysSince >= 45) {\n    // Count previous re-engagement attempts from tags\n    const reengageTag = tags.find(t => t.startsWith('Re-engagement Attempt'));\n    const attemptNumber = reengageTag \n      ? parseInt(reengageTag.split(' ').pop()) || 1 \n      : 0;\n    \n    // Skip if already attempted 3 times\n    if (attemptNumber >= 3) continue;\n    \n    reengagementCandidates.push({\n      ...c,\n      lastEngaged: lastEngaged.toISOString(),\n      daysSince,\n      tier: daysSince >= 90 ? 'dormant-90' : daysSince >= 60 ? 'dormant-60' : 'dormant-45',\n      attemptNumber,\n      daysSinceCategory: `${daysSince} days since last engagement`\n    });\n  }\n}\n\n// Sort by tier (most dormant first) and limit\nreturn reengagementCandidates\n  .sort((a, b) => b.daysSince - a.daysSince)\n  .slice(0, 30);"
+      },
+      "id": "filter-dormant",
+      "name": "Filter Dormant Contacts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate re-engagement email based on tier and previous attempts\nconst c = $input.first().json;\nconst attempt = c.attemptNumber || 0;\n\nconst variants = [\n  // Variant 1 - Value focused\n  {\n    subject: `Checking in, ${c.firstName || 'Friend'} - Quick question about your coverage`,\n    html: `<h1>Hi ${c.firstName || 'there'},</h1><p>I wanted to check in and see how things are going with your insurance coverage.</p><p>Have your needs changed recently? Have you moved, experienced a major life event, or is your current coverage still meeting your needs?</p><p>I'd be happy to do a free, no-obligation review of your coverage — just reply to this email or <a href=\"https://buckalewfinancialservices.com/schedule\">book a call</a>.</p><p>Warm regards,<br/>The Buckalew Financial Team</p>`\n  },\n  // Variant 2 - Educational\n  {\n    subject: `Medicare & Insurance Update: What ${c.firstName ? c.firstName.split(' ')[0] : 'You'} Should Know`,\n    html: `<h1>Hi ${c.firstName || 'there'},</h1><p>I was thinking of you and wanted to share some important updates in the insurance world that might affect you:</p><ul><li>💰 Medicare costs are changing — make sure you're not overpaying</li><li>📅 Annual Enrollment is a great time to review your coverage</li><li>🏥 New benefits may be available to you</li></ul><p><a href=\"https://buckalewfinancialservices.com/resources\">Click here for our free resource guide</a></p><p>Questions? Just reply — I'm here to help!<br/>Warm regards,<br/>The Buckalew Financial Team</p>`\n  },\n  // Variant 3 - Direct CTA\n  {\n    subject: `Still there, ${c.firstName || 'Friend'}? Claim your free plan review`,\n    html: `<h1>Hi ${c.firstName || 'there'},</h1><p>We've noticed you haven't connected with us in a while, and we just wanted to make sure we're still here for you.</p><p>If you're all set with your insurance, just ignore this email — no hard feelings!</p><p>But if you've got questions, need a quote, or want to make sure you're not missing out on savings, <strong>I'd love to hear from you.</strong></p><p><a href=\"https://buckalewfinancialservices.com/schedule\">👉 Schedule a free 15-minute call</a></p><p>Talk soon!<br/>The Buckalew Financial Team</p>`\n  }\n];\n\n// Rotate variants based on attempt number\nconst variant = variants[attempt % variants.length];\n\nreturn {\n  ...c,\n  subject: variant.subject,\n  html: variant.html,\n  attemptNumber: attempt + 1,\n  variantIndex: attempt % variants.length\n};"
+      },
+      "id": "generate-content",
+      "name": "Generate Re-engagement Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.email}}",
+        "subject": "={{$json.subject}}",
+        "html": "={{$json.html}}",
+        "options": {}
+      },
+      "id": "send-reengagement",
+      "name": "Send Re-engagement Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.id}}/tags",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GHL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "tags", "value": "=[\"Re-engagement Attempt {{$json.attemptNumber}}\", \"{{$json.tier}}\"]" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-attempt-tag",
+      "name": "Update Attempt Tag",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            { "id": "max-attempts", "leftValue": "={{$json.attemptNumber}}", "rightValue": 3, "operator": { "type": "number", "operation": "gte" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-max-attempts",
+      "name": "Max Attempts Reached?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1420, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "chat_id", "value": "{{$env.TELEGRAM_CHAT_ID}}" },
+            { "name": "text", "value": "📋 *Re-engagement Complete*\\n\\n*Name:* {{$json.firstName}} {{$json.lastName}}\\n*Email:* {{$json.email}}\\n*Days dormant:* {{$json.daysSince}}\\n*Attempts made:* {{$json.attemptNumber}}\\n*Status:* {{$json.attemptNumber >= 3 ? '⏸️ Paused (max attempts reached)' : '✅ Email sent'}}\\n\\n_Next step: manual review or remove from nurture if appropriate_" },
+            { "name": "parse_mode", "value": "Markdown" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "telegram-report",
+      "name": "Telegram Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1640, 300]
+    }
+  ],
+  "connections": {
+    "Weekly Trigger (Mondays)": { "main": [[{ "node": "Get All Contacts", "type": "main", "index": 0 }]] },
+    "Get All Contacts": { "main": [[{ "node": "Filter Dormant Contacts", "type": "main", "index": 0 }]] },
+    "Filter Dormant Contacts": { "main": [[{ "node": "Generate Re-engagement Email", "type": "main", "index": 0 }]] },
+    "Generate Re-engagement Email": { "main": [[{ "node": "Send Re-engagement Email", "type": "main", "index": 0 }]] },
+    "Send Re-engagement Email": { "main": [[{ "node": "Update Attempt Tag", "type": "main", "index": 0 }]] },
+    "Update Attempt Tag": { "main": [[{ "node": "Max Attempts Reached?", "type": "main", "index": 0 }]] },
+    "Max Attempts Reached?": { "main": [[{ "node": "Telegram Report", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": ["insurance", "re-engagement", "nurture", "retention"],
+  "meta": { "templateCredsSetupCount": 0, "templateId": "lead-reengagement" }
+}

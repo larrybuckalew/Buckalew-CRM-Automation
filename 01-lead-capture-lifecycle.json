@@ -1,0 +1,378 @@
+{
+  "name": "Insurance Lead Capture & Lifecycle",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "form-poll-trigger",
+      "name": "Form Poll Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/hooks/YOUR_FORM_ID_HERE/catch",
+        "requestMethod": "GET",
+        "sendHeaders": true,
+        "specifyHeaders": "expression",
+        "headerParameters": {
+          "parameters": []
+        },
+        "sendQuery": true,
+        "specifyQuery": "expression",
+        "queryParameters": {
+          "parameters": []
+        },
+        "info": "Replace YOUR_FORM_ID_HERE with your actual GHL Form ID"
+      },
+      "id": "form-trigger",
+      "name": "Form Submission Trigger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/",
+        "requestMethod": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.GHL_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "firstName",
+              "value": "={{$json.first_name}}"
+            },
+            {
+              "name": "lastName",
+              "value": "={{$json.last_name}}"
+            },
+            {
+              "name": "email",
+              "value": "={{$json.email}}"
+            },
+            {
+              "name": "phone",
+              "value": "={{$json.phone}}"
+            },
+            {
+              "name": "locationId",
+              "value": "GXAzp8lTmMJ93EPLDBmW"
+            },
+            {
+              "name": "source",
+              "value": "Website Form"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create-ghl-contact",
+      "name": "Create GHL Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lead scoring based on age, location, and coverage needs\nconst data = $input.first().json;\n\nlet score = 50; // Base score\n\n// Age scoring (prefer 60-75 range for Medicare/Life)\nconst age = parseInt(data.age) || 0;\nif (age >= 60 && age <= 75) score += 30;\nelse if (age >= 50 && age < 60) score += 15;\nelse if (age > 75) score += 10;\n\n// Location scoring (FL, TX, CA, NC, SC, MI - licensed states)\nconst licensedStates = ['FL', 'TX', 'CA', 'NC', 'SC', 'MI'];\nconst state = (data.state || '').toUpperCase();\nif (licensedStates.includes(state)) score += 20;\n\n// Coverage intent scoring\nconst coverage = (data.coverage_type || '').toLowerCase();\nif (coverage.includes('medicare')) score += 25;\nelse if (coverage.includes('life')) score += 20;\nelse if (coverage.includes('health')) score += 15;\n\n// Has email and phone = high intent\nif (data.email && data.phone) score += 15;\n\nreturn { score, age, state, coverage, originalData: data };"
+      },
+      "id": "lead-scorer",
+      "name": "Lead Scorer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "score-threshold",
+              "leftValue": "={{$json.score}}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "score-filter",
+      "name": "High Score Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "{{$env.TELEGRAM_CHAT_ID}}"
+            },
+            {
+              "name": "text",
+              "value": "🎯 *New High-Value Lead*\\n\\n*Name:* {{$json.originalData.first_name}} {{$json.originalData.last_name}}\\n*Email:* {{$json.originalData.email}}\\n*Phone:* {{$json.originalData.phone}}\\n*Lead Score:* {{$json.score}}/100\\n*Coverage:* {{$json.originalData.coverage_type}}\\n*State:* {{$json.state}}\\n\\n_Score 70+ = priority follow-up recommended_"
+            },
+            {
+              "name": "parse_mode",
+              "value": "Markdown"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "telegram-high-priority",
+      "name": "Telegram High Priority Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "{{$env.TELEGRAM_CHAT_ID}}"
+            },
+            {
+              "name": "text",
+              "value": "📥 *New Lead Captured*\\n\\n*Name:* {{$json.originalData.first_name}} {{$json.originalData.last_name}}\\n*Email:* {{$json.originalData.email}}\\n*Phone:* {{$json.originalData.phone}}\\n*Lead Score:* {{$json.score}}/100\\n*Coverage:* {{$json.originalData.coverage_type}}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "Markdown"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "telegram-standard-alert",
+      "name": "Telegram Standard Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1200, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.id}}/tags",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.GHL_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "tags",
+              "value": "=[\"{{$json.score >= 70 ? 'High Value Lead' : 'Standard Lead'}}\", \"{{$json.originalData.coverage_type}}\", \"{{$json.state}}\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-ghl-tags",
+      "name": "Update GHL Tags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1420, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://services.leadconnectorhq.com/contacts/{{$json.id}}/customFields",
+        "requestMethod": "PUT",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.GHL_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "customFields",
+              "value": "[{\"key\": \"lead_score\", \"field_value\": \"{{$json.score}}\"}]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-lead-score",
+      "name": "Update Lead Score Custom Field",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1640, 300]
+    },
+    {
+      "parameters": {
+        "operation": "schedule",
+        "entityType": "contact",
+        "contactId": "={{$json.id}}",
+        "rule": {
+          "frequency": "once",
+          "day": 1,
+          "month": "day",
+          "weekday": "",
+          "hour": 10,
+          "minute": 0
+        },
+        "title": "Follow up with {{$json.originalData.first_name}} {{$json.originalData.last_name}}",
+        "assignedTo": "={{$env.AGENT_USER_ID}}",
+        "notes": "Lead Score: {{$json.score}}/100 | Coverage: {{$json.originalData.coverage_type}} | Source: Website Form"
+      },
+      "id": "create-followup-task",
+      "name": "Create Follow-up Task",
+      "type": "n8n-nodes-base.goHighLevel",
+      "typeVersion": 1,
+      "position": [1860, 300],
+      "credentials": {
+        "goHighLevelApi": "={\"id\":\"YOUR_GHL_CREDS_ID\"}"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "fromAddress": "={{$env.EMAIL_FROM}}",
+        "toAddress": "={{$json.originalData.email}}",
+        "subject": "Thanks for reaching out, {{$json.originalData.first_name}}!",
+        "html": "<h1>Welcome to Buckalew Financial!</h1><p>Hi {{$json.originalData.first_name}},</p><p>Thank you for your interest in <strong>{{$json.originalData.coverage_type}}</strong>. Our team will review your inquiry and reach out within 24 hours.</p><p>In the meantime, feel free to explore our resources:</p><ul><li><a href=\"https://buckalewfinancialservices.com/medicare-resources\">Medicare Guide</a></li><li><a href=\"https://buckalewfinancialservices.com/life-insurance\">Life Insurance Options</a></li></ul><p>Best regards,<br/>The Buckalew Financial Team</p>",
+        "options": {}
+      },
+      "id": "welcome-email",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 1.1,
+      "position": [2080, 300]
+    }
+  ],
+  "connections": {
+    "Form Poll Trigger": {
+      "main": [
+        [{ "node": "Form Submission Trigger", "type": "main", "index": 0 }]
+      ]
+    },
+    "Form Submission Trigger": {
+      "main": [
+        [{ "node": "Create GHL Contact", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create GHL Contact": {
+      "main": [
+        [{ "node": "Lead Scorer", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lead Scorer": {
+      "main": [
+        [{ "node": "High Score Filter", "type": "main", "index": 0 }]
+      ]
+    },
+    "High Score Filter": {
+      "main": [
+        [{ "node": "Telegram High Priority Alert", "type": "main", "index": 0 }],
+        [{ "node": "Telegram Standard Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram High Priority Alert": {
+      "main": [
+        [{ "node": "Update GHL Tags", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram Standard Alert": {
+      "main": [
+        [{ "node": "Update GHL Tags", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update GHL Tags": {
+      "main": [
+        [{ "node": "Update Lead Score Custom Field", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Lead Score Custom Field": {
+      "main": [
+        [{ "node": "Create Follow-up Task", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Follow-up Task": {
+      "main": [
+        [{ "node": "Send Welcome Email", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["insurance", "lead-capture", "medicare"],
+  "meta": {
+    "templateCredsSetupCount": 0,
+    "templateId": "insurance-lead-capture"
+  }
+}
