@@ -16,7 +16,7 @@ CRM automation workflows for Buckalew Financial Services using GoHighLevel.
 
 1. Set your GoHighLevel API key:
    ```
-   set GHL_API_KEY=pit-fcb5ac96-c1fb-489a-bbdc-a6bea29e23ff
+   set GHL_API_KEY=YOUR_GHL_API_KEY_HERE
    ```
 
 2. Set your Location ID:

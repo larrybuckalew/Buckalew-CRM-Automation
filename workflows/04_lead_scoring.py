@@ -25,7 +25,7 @@ import json
 import os
 from datetime import datetime
 
-GHL_API_KEY = os.environ.get("GHL_API_KEY", "pit-fcb5ac96-c1fb-489a-bbdc-a6bea29e23ff")
+GHL_API_KEY = os.environ.get("GHL_API_KEY", "YOUR_GHL_API_KEY_HERE")
 GHL_BASE_URL = "https://services.leadconnectorhq.com"
 HEADERS = {
     "Authorization": f"Bearer {GHL_API_KEY}",
